@@ -15,32 +15,32 @@ import (
 // 5. Dial errors
 
 const dimensionless = "1"
-const seconds = "s"
+const milliseconds = "ms"
 
 var (
-	MBytesRead               = stats.Int64("redis/bytes_read", "The number of bytes read from the server", stats.UnitBytes)
-	MBytesWritten            = stats.Int64("redis/bytes_written", "The number of bytes written out to the server", stats.UnitBytes)
-	MDials                   = stats.Int64("redis/dials", "The number of dials", dimensionless)
-	MDialErrors              = stats.Int64("redis/dial_errors", "The number of dial errors", dimensionless)
-	MDialLatencySeconds      = stats.Float64("redis/dial_latency_seconds", "The number of seconds spent dialling to the Redis server", dimensionless)
-	MConnectionsTaken        = stats.Int64("redis/connections_taken", "The number of connections taken", dimensionless)
-	MConnectionsClosed       = stats.Int64("redis/connections_closed", "The number of connections closed", dimensionless)
-	MConnectionsReturned     = stats.Int64("redis/connections_returned", "The number of connections returned to the pool", dimensionless)
-	MConnectionsReused       = stats.Int64("redis/connections_reused", "The number of connections reused", dimensionless)
-	MConnectionsNew          = stats.Int64("redis/connections_new", "The number of newly created connections", dimensionless)
-	MConnectionUseTime       = stats.Float64("redis/connection_usetime", "The number of seconds for which a connection is used", seconds)
-	MPoolGets                = stats.Int64("redis/pool_get_invocations", "The number of times that the connection pool is asked for a connection", dimensionless)
-	MPoolGetErrors           = stats.Int64("redis/pool_get_invocation_errors", "The number of errors encountered when the connection pool is asked for a connection", dimensionless)
-	MRoundtripLatencySeconds = stats.Float64("redis/roundtrip_latency", "The time in seconds between sending the first byte to the server until the last byte of response is received back", seconds)
-	MWriteErrors             = stats.Int64("redis/write_errors", "The number of errors encountered during write routines", dimensionless)
-	MReadErrors              = stats.Int64("redis/read_errors", "The number of errors encountered during read routines", dimensionless)
-	MWrites                  = stats.Int64("redis/writes", "The number of write invocations", dimensionless)
-	MReads                   = stats.Int64("redis/reads", "The number of read invocations", dimensionless)
+	MBytesRead                    = stats.Int64("redis/bytes_read", "The number of bytes read from the server", stats.UnitBytes)
+	MBytesWritten                 = stats.Int64("redis/bytes_written", "The number of bytes written out to the server", stats.UnitBytes)
+	MDials                        = stats.Int64("redis/dials", "The number of dials", dimensionless)
+	MDialErrors                   = stats.Int64("redis/dial_errors", "The number of dial errors", dimensionless)
+	MDialLatencyMilliseconds      = stats.Float64("redis/dial_latency_milliseconds", "The number of milliseconds spent dialling to the Redis server", dimensionless)
+	MConnectionsTaken             = stats.Int64("redis/connections_taken", "The number of connections taken", dimensionless)
+	MConnectionsClosed            = stats.Int64("redis/connections_closed", "The number of connections closed", dimensionless)
+	MConnectionsReturned          = stats.Int64("redis/connections_returned", "The number of connections returned to the pool", dimensionless)
+	MConnectionsReused            = stats.Int64("redis/connections_reused", "The number of connections reused", dimensionless)
+	MConnectionsNew               = stats.Int64("redis/connections_new", "The number of newly created connections", dimensionless)
+	MConnectionUseTime            = stats.Float64("redis/connection_usetime", "The number of milliseconds for which a connection is used", milliseconds)
+	MPoolGets                     = stats.Int64("redis/pool_get_invocations", "The number of times that the connection pool is asked for a connection", dimensionless)
+	MPoolGetErrors                = stats.Int64("redis/pool_get_invocation_errors", "The number of errors encountered when the connection pool is asked for a connection", dimensionless)
+	MRoundtripLatencyMilliseconds = stats.Float64("redis/roundtrip_latency", "The time in milliseconds between sending the first byte to the server until the last byte of response is received back", milliseconds)
+	MWriteErrors                  = stats.Int64("redis/write_errors", "The number of errors encountered during write routines", dimensionless)
+	MReadErrors                   = stats.Int64("redis/read_errors", "The number of errors encountered during read routines", dimensionless)
+	MWrites                       = stats.Int64("redis/writes", "The number of write invocations", dimensionless)
+	MReads                        = stats.Int64("redis/reads", "The number of read invocations", dimensionless)
 )
 
 var KeyCommandName, _ = tag.NewKey("cmd")
 
-var defaultSecondsDistribution = view.Distribution(
+var defaultMillisecondsDistribution = view.Distribution(
 	// [0ms, 0.001ms, 0.005ms, 0.01ms, 0.05ms, 0.1ms, 0.5ms, 1ms, 1.5ms, 2ms, 2.5ms, 5ms, 10ms, 25ms, 50ms, 100ms, 200ms, 400ms, 600ms, 800ms, 1s, 1.5s, 2.5s, 5s, 10s, 20s, 40s, 100s, 200s, 500s]
 	0, 0.000001, 0.000005, 0.00001, 0.00005, 0.0001, 0.0005, 0.001, 0.0015, 0.002, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.2, 0.4, 0.6, 0.8, 1, 1.5, 2.5, 5, 10, 20, 40, 100, 200, 500,
 )
@@ -53,9 +53,9 @@ var defaultBytesDistribution = view.Distribution(
 var Views = []*view.View{
 	{
 		Name:        "redis/client/connection_usetime",
-		Description: "The duration in seconds for which a connection is used before being returned to the pool, closed or discarded",
+		Description: "The duration in milliseconds for which a connection is used before being returned to the pool, closed or discarded",
 
-		Aggregation: defaultSecondsDistribution,
+		Aggregation: defaultMillisecondsDistribution,
 		Measure:     MConnectionUseTime,
 	},
 	{
@@ -72,9 +72,9 @@ var Views = []*view.View{
 	},
 	{
 		Name:        "redis/client/dial_latency",
-		Description: "The number of seconds spent dialling",
-		Aggregation: defaultSecondsDistribution,
-		Measure:     MDialLatencySeconds,
+		Description: "The number of milliseconds spent dialling",
+		Aggregation: defaultMillisecondsDistribution,
+		Measure:     MDialLatencyMilliseconds,
 	},
 	{
 		Name:        "redis/client/bytes_written_cumulative",
@@ -102,9 +102,9 @@ var Views = []*view.View{
 	},
 	{
 		Name:        "redis/client/roundtrip_latency",
-		Description: "The distribution of seconds of the roundtrip latencies for method invocation",
-		Aggregation: defaultSecondsDistribution,
-		Measure:     MRoundtripLatencySeconds,
+		Description: "The distribution of milliseconds of the roundtrip latencies for method invocation",
+		Aggregation: defaultMillisecondsDistribution,
+		Measure:     MRoundtripLatencyMilliseconds,
 		TagKeys:     []tag.Key{KeyCommandName},
 	},
 	{

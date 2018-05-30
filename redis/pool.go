@@ -346,7 +346,7 @@ func (p *Pool) get(ctx context.Context) (*poolConn, error) {
 	p.mu.Unlock()
 	dialStartTime := time.Now()
 	c, err := p.Dial()
-	measures := []stats.Measurement{observability.MDialLatencySeconds.M(time.Since(dialStartTime).Seconds())}
+	measures := []stats.Measurement{observability.MDialLatencyMilliseconds.M(observability.SinceInMilliseconds(dialStartTime))}
 	if err != nil {
 		measures = append(measures, observability.MDialErrors.M(1))
 		c = nil
@@ -479,7 +479,11 @@ func (ac *activeConn) Do(commandName string, args ...interface{}) (reply interfa
 	}
 	ci := internal.LookupCommandInfo(commandName)
 	ac.state = (ac.state | ci.Set) &^ ci.Clear
-	return pc.c.(contextAwareDoer).DoWithContext(ac.context(), commandName, args...)
+	cwdoer, ok := pc.c.(contextAwareDoer)
+	if ok {
+		return cwdoer.DoWithContext(ac.context(), commandName, args...)
+	}
+	return pc.c.Do(commandName, args...)
 }
 
 func (ac *activeConn) DoWithTimeout(timeout time.Duration, commandName string, args ...interface{}) (reply interface{}, err error) {

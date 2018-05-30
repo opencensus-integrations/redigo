@@ -180,7 +180,7 @@ func Dial(network, address string, options ...DialOption) (Conn, error) {
 func DialWithContext(ctx context.Context, network, address string, options ...DialOption) (Conn, error) {
 	startTime := time.Now()
 	conn, err := doDial(network, address, options...)
-	measures := []stats.Measurement{observability.MDials.M(1), observability.MDialLatencySeconds.M(time.Since(startTime).Seconds())}
+	measures := []stats.Measurement{observability.MDials.M(1), observability.MDialLatencyMilliseconds.M(observability.SinceInMilliseconds(startTime))}
 	if err != nil {
 		measures = append(measures, observability.MDialErrors.M(1))
 	}
@@ -685,7 +685,7 @@ func (c *conn) do(ctx context.Context, readTimeout time.Duration, cmd string, ar
 	defer func() {
 		// At the very end we need to record the overall latency
 		span.End()
-		stats.Record(ctx, observability.MRoundtripLatencySeconds.M(time.Since(startTime).Seconds()))
+		stats.Record(ctx, observability.MRoundtripLatencyMilliseconds.M(observability.SinceInMilliseconds(startTime)))
 	}()
 
 	if c.writeTimeout != 0 {
