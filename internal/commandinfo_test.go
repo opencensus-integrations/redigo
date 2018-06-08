@@ -11,6 +11,7 @@ func TestLookupCommandInfo(t *testing.T) {
 }
 
 func benchmarkLookupCommandInfo(b *testing.B, names ...string) {
+	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		for _, c := range names {
 			LookupCommandInfo(c)

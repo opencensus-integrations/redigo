@@ -92,6 +92,7 @@ func TestConnMuxClose(t *testing.T) {
 }
 
 func BenchmarkConn(b *testing.B) {
+	b.ReportAllocs()
 	b.StopTimer()
 	c, err := redistest.Dial()
 	if err != nil {
@@ -108,6 +109,7 @@ func BenchmarkConn(b *testing.B) {
 }
 
 func BenchmarkConnMux(b *testing.B) {
+	b.ReportAllocs()
 	b.StopTimer()
 	c, err := redistest.Dial()
 	if err != nil {
@@ -128,6 +130,7 @@ func BenchmarkConnMux(b *testing.B) {
 }
 
 func BenchmarkPool(b *testing.B) {
+	b.ReportAllocs()
 	b.StopTimer()
 
 	p := redis.Pool{Dial: redistest.Dial, MaxIdle: 1}
@@ -154,6 +157,7 @@ func BenchmarkPool(b *testing.B) {
 const numConcurrent = 10
 
 func BenchmarkConnMuxConcurrent(b *testing.B) {
+	b.ReportAllocs()
 	b.StopTimer()
 	c, err := redistest.Dial()
 	if err != nil {
@@ -184,6 +188,7 @@ func BenchmarkConnMuxConcurrent(b *testing.B) {
 }
 
 func BenchmarkPoolConcurrent(b *testing.B) {
+	b.ReportAllocs()
 	b.StopTimer()
 
 	p := redis.Pool{Dial: redistest.Dial, MaxIdle: numConcurrent}
@@ -223,6 +228,7 @@ func BenchmarkPoolConcurrent(b *testing.B) {
 }
 
 func BenchmarkPipelineConcurrency(b *testing.B) {
+	b.ReportAllocs()
 	b.StopTimer()
 	c, err := redistest.Dial()
 	if err != nil {

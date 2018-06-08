@@ -692,6 +692,7 @@ func TestLocking_TestOnBorrowFails_PoolDoesntCrash(t *testing.T) {
 }
 
 func BenchmarkPoolGet(b *testing.B) {
+	b.ReportAllocs()
 	b.StopTimer()
 	p := redis.Pool{Dial: redis.DialDefaultServer, MaxIdle: 2}
 	c := p.Get()
@@ -708,6 +709,7 @@ func BenchmarkPoolGet(b *testing.B) {
 }
 
 func BenchmarkPoolGetErr(b *testing.B) {
+	b.ReportAllocs()
 	b.StopTimer()
 	p := redis.Pool{Dial: redis.DialDefaultServer, MaxIdle: 2}
 	c := p.Get()
@@ -727,6 +729,7 @@ func BenchmarkPoolGetErr(b *testing.B) {
 }
 
 func BenchmarkPoolGetPing(b *testing.B) {
+	b.ReportAllocs()
 	b.StopTimer()
 	p := redis.Pool{Dial: redis.DialDefaultServer, MaxIdle: 2}
 	c := p.Get()
@@ -741,6 +744,87 @@ func BenchmarkPoolGetPing(b *testing.B) {
 		if _, err := c.Do("PING"); err != nil {
 			b.Fatal(err)
 		}
+		c.Close()
+	}
+}
+
+func BenchmarkPoolGetSet(b *testing.B) {
+	b.ReportAllocs()
+	b.StopTimer()
+	p := redis.Pool{Dial: redis.DialDefaultServer, MaxIdle: 2}
+	c := p.Get()
+	if err := c.Err(); err != nil {
+		b.Fatal(err)
+	}
+	c.Close()
+	defer p.Close()
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		c = p.Get()
+		if _, err := c.Do("SET", "TESTING-FOO", "BAR"); err != nil {
+			b.Fatal(err)
+		}
+		c.Close()
+	}
+}
+
+func BenchmarkPoolGetGet(b *testing.B) {
+	b.ReportAllocs()
+	b.StopTimer()
+	p := redis.Pool{Dial: redis.DialDefaultServer, MaxIdle: 2}
+	c := p.Get()
+	if err := c.Err(); err != nil {
+		b.Fatal(err)
+	}
+	c.Close()
+	defer p.Close()
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		c = p.Get()
+		if _, err := c.Do("GET", "TESTING-FOO"); err != nil {
+			b.Fatal(err)
+		}
+		c.Close()
+	}
+}
+
+func BenchmarkPoolGetHSet(b *testing.B) {
+	b.ReportAllocs()
+	b.StopTimer()
+	p := redis.Pool{Dial: redis.DialDefaultServer, MaxIdle: 2}
+	c := p.Get()
+	if err := c.Err(); err != nil {
+		b.Fatal(err)
+	}
+	c.Close()
+	defer p.Close()
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		c = p.Get()
+		if _, err := c.Do("HSET", "TESTING-FOO", "foo", "bar"); err != nil {
+			b.Fatal(err)
+		}
+		c.Close()
+	}
+}
+
+func BenchmarkPoolGetHGet(b *testing.B) {
+	b.ReportAllocs()
+	b.StopTimer()
+	p := redis.Pool{Dial: redis.DialDefaultServer, MaxIdle: 2}
+	c := p.Get()
+	if err := c.Err(); err != nil {
+		b.Fatal(err)
+	}
+	c.Close()
+	defer p.Close()
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		c = p.Get()
+		if _, err := c.Do("HGET", "TESTING-FOO", "foo"); err != nil {
+			b.Fatal(err)
+		}
+		_, _ = c.Do("HGET", "TESTING-FOO", "$foo$")
 		c.Close()
 	}
 }

@@ -734,6 +734,7 @@ func TestExecError(t *testing.T) {
 }
 
 func BenchmarkDoEmpty(b *testing.B) {
+	b.ReportAllocs()
 	b.StopTimer()
 	c, err := redis.DialDefaultServer()
 	if err != nil {
@@ -749,6 +750,7 @@ func BenchmarkDoEmpty(b *testing.B) {
 }
 
 func BenchmarkDoPing(b *testing.B) {
+	b.ReportAllocs()
 	b.StopTimer()
 	c, err := redis.DialDefaultServer()
 	if err != nil {
