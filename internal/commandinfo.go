@@ -12,7 +12,7 @@
 // License for the specific language governing permissions and limitations
 // under the License.
 
-package internal // import "github.com/gomodule/redigo/internal"
+package internal // import "github.com/opencensus-integrations/redigo/internal"
 
 import (
 	"strings"

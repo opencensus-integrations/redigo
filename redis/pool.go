@@ -26,8 +26,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/gomodule/redigo/internal"
-	"github.com/gomodule/redigo/internal/observability"
+	"github.com/opencensus-integrations/redigo/internal"
+	"github.com/opencensus-integrations/redigo/internal/observability"
 
 	"go.opencensus.io/stats"
 	"go.opencensus.io/trace"
