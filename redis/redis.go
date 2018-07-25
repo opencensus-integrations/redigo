@@ -15,6 +15,7 @@
 package redis
 
 import (
+	"context"
 	"errors"
 	"time"
 )
@@ -43,6 +44,25 @@ type Conn interface {
 
 	// Receive receives a single reply from the Redis server
 	Receive() (reply interface{}, err error)
+}
+
+type ConnWithContext interface {
+	Conn
+
+	// CloseContext closes the connection.
+	CloseContext(context.Context) error
+
+	// DoContext sends a command to the server and returns the received reply.
+	DoContext(ctx context.Context, commandName string, args ...interface{}) (reply interface{}, err error)
+
+	// SendContext writes the command to the client's output buffer.
+	SendContext(ctx context.Context, commandName string, args ...interface{}) error
+
+	// FlushContext flushes the output buffer to the Redis server.
+	FlushContext(context.Context) error
+
+	// ReceiveContext receives a single reply from the Redis server
+	ReceiveContext(context.Context) (reply interface{}, err error)
 }
 
 // Argument is the interface implemented by an object which wants to control how

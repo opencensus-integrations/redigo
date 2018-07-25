@@ -14,6 +14,6 @@
 
 package redis
 
-import "github.com/gomodule/redigo/internal/observability"
+import "github.com/opencensus-integrations/redigo/internal/observability"
 
 var ObservabilityMetricViews = observability.Views

@@ -20,7 +20,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/gomodule/redigo/redis"
+	"github.com/opencensus-integrations/redigo/redis"
 )
 
 func TestWaitPoolGetContext(t *testing.T) {

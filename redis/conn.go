@@ -32,11 +32,12 @@ import (
 	"go.opencensus.io/stats"
 	"go.opencensus.io/trace"
 
-	"github.com/gomodule/redigo/internal/observability"
+	"github.com/opencensus-integrations/redigo/internal/observability"
 )
 
 var (
 	_ ConnWithTimeout = (*conn)(nil)
+	_ ConnWithContext = (*conn)(nil)
 )
 
 // conn is the low-level implementation of Conn
@@ -322,7 +323,8 @@ func NewConn(netConn net.Conn, readTimeout, writeTimeout time.Duration) Conn {
 	}
 }
 
-func (c *conn) Close() error {
+func (c *conn) CloseContext(ctx context.Context) error {
+	ctx, span := trace.StartSpan(ctx, "redis.(*Conn).Close")
 	c.mu.Lock()
 	err := c.err
 	if c.err == nil {
@@ -330,7 +332,12 @@ func (c *conn) Close() error {
 		err = c.conn.Close()
 	}
 	c.mu.Unlock()
+	span.End()
 	return err
+}
+
+func (c *conn) Close() error {
+	return c.CloseContext(context.Background())
 }
 
 func (c *conn) fatal(err error) error {
@@ -594,10 +601,13 @@ func (c *conn) readReply() (interface{}, int, error) {
 }
 
 func (c *conn) Send(cmd string, args ...interface{}) error {
-	return c.SendWithContext(context.Background(), cmd, args...)
+	return c.SendContext(context.Background(), cmd, args...)
 }
 
-func (c *conn) SendWithContext(ctx context.Context, cmd string, args ...interface{}) error {
+func (c *conn) SendContext(ctx context.Context, cmd string, args ...interface{}) error {
+	_, span := trace.StartSpan(ctx, "redis.(*Conn).Send")
+	defer span.End()
+
 	c.mu.Lock()
 	c.pending += 1
 	c.mu.Unlock()
@@ -605,26 +615,48 @@ func (c *conn) SendWithContext(ctx context.Context, cmd string, args ...interfac
 		c.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout))
 	}
 	if _, err := c.writeCommand(ctx, cmd, args); err != nil {
+		stats.Record(ctx, observability.MWriteErrors.M(1))
+		span.SetStatus(trace.Status{Code: trace.StatusCodeInternal, Message: err.Error()})
+		return c.fatal(err)
+	}
+	return nil
+}
+
+func (c *conn) FlushContext(ctx context.Context) error {
+	_, span := trace.StartSpan(ctx, "redis.(*Conn).Flush")
+	defer span.End()
+
+	if c.writeTimeout != 0 {
+		c.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout))
+	}
+	if err := c.bw.Flush(); err != nil {
+		stats.Record(ctx, observability.MWriteErrors.M(1))
+		span.SetStatus(trace.Status{Code: trace.StatusCodeInternal, Message: err.Error()})
 		return c.fatal(err)
 	}
 	return nil
 }
 
 func (c *conn) Flush() error {
-	if c.writeTimeout != 0 {
-		c.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout))
-	}
-	if err := c.bw.Flush(); err != nil {
-		return c.fatal(err)
-	}
-	return nil
+	return c.FlushContext(context.Background())
 }
 
 func (c *conn) Receive() (interface{}, error) {
-	return c.ReceiveWithTimeout(c.readTimeout)
+	return c.ReceiveContext(context.Background())
+}
+
+func (c *conn) ReceiveContext(ctx context.Context) (interface{}, error) {
+	return c.receive(ctx, c.readTimeout)
 }
 
 func (c *conn) ReceiveWithTimeout(timeout time.Duration) (reply interface{}, err error) {
+	return c.receive(context.Background(), timeout)
+}
+
+func (c *conn) receive(ctx context.Context, timeout time.Duration) (reply interface{}, err error) {
+	_, span := trace.StartSpan(ctx, "redis.(*Conn).Receive")
+	defer span.End()
+
 	var deadline time.Time
 	if timeout != 0 {
 		deadline = time.Now().Add(timeout)
@@ -632,6 +664,8 @@ func (c *conn) ReceiveWithTimeout(timeout time.Duration) (reply interface{}, err
 	c.conn.SetReadDeadline(deadline)
 
 	if reply, _, err = c.readReply(); err != nil {
+		stats.Record(ctx, observability.MWriteErrors.M(1))
+		span.SetStatus(trace.Status{Code: trace.StatusCodeInternal, Message: err.Error()})
 		return nil, c.fatal(err)
 	}
 	// When using pub/sub, the number of receives can be greater than the
@@ -647,6 +681,8 @@ func (c *conn) ReceiveWithTimeout(timeout time.Duration) (reply interface{}, err
 	}
 	c.mu.Unlock()
 	if err, ok := reply.(Error); ok {
+		stats.Record(ctx, observability.MWriteErrors.M(1))
+		span.SetStatus(trace.Status{Code: trace.StatusCodeInternal, Message: err.Error()})
 		return nil, err
 	}
 	return
@@ -660,7 +696,7 @@ func (c *conn) DoWithTimeout(readTimeout time.Duration, cmd string, args ...inte
 	return c.do(context.Background(), readTimeout, cmd, args...)
 }
 
-func (c *conn) DoWithContext(ctx context.Context, cmd string, args ...interface{}) (interface{}, error) {
+func (c *conn) DoContext(ctx context.Context, cmd string, args ...interface{}) (interface{}, error) {
 	return c.do(ctx, c.readTimeout, cmd, args...)
 }
 
@@ -700,13 +736,13 @@ func (c *conn) do(ctx context.Context, readTimeout time.Duration, cmd string, ar
 		stats.Record(ctx, observability.MBytesWritten.M(nw), observability.MWrites.M(1))
 		if err != nil {
 			stats.Record(ctx, observability.MWriteErrors.M(1))
-			span.SetStatus(trace.Status{Code: int32(trace.StatusCodeInternal), Message: err.Error()})
+			span.SetStatus(trace.Status{Code: trace.StatusCodeInternal, Message: err.Error()})
 			return nil, c.fatal(err)
 		}
 	}
 
 	if err := c.bw.Flush(); err != nil {
-		span.SetStatus(trace.Status{Code: int32(trace.StatusCodeInternal), Message: err.Error()})
+		span.SetStatus(trace.Status{Code: trace.StatusCodeInternal, Message: err.Error()})
 		return nil, c.fatal(err)
 	}
 
