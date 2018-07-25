@@ -32,7 +32,7 @@ import (
 	"go.opencensus.io/stats"
 	"go.opencensus.io/trace"
 
-	"github.com/gomodule/redigo/internal/observability"
+	"github.com/opencensus-integrations/redigo/internal/observability"
 )
 
 var (
