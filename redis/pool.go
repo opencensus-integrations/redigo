@@ -30,6 +30,7 @@ import (
 	"github.com/opencensus-integrations/redigo/internal/observability"
 
 	"go.opencensus.io/stats"
+	"go.opencensus.io/tag"
 	"go.opencensus.io/trace"
 )
 
@@ -188,19 +189,15 @@ func (p *Pool) Get() Conn {
 
 func (p *Pool) GetWithContext(ctx context.Context) Conn {
 	ctx, span := trace.StartSpan(ctx, "redis.(*Pool).Get")
-	measures := []stats.Measurement{observability.MPoolGets.M(1)}
-	defer func() {
-		span.End()
-		stats.Record(ctx, measures...)
-	}()
+	defer span.End()
 
 	pc, err := p.get(ctx)
 	if err != nil {
-		measures = append(measures, observability.MPoolGetErrors.M(1))
 		span.SetStatus(trace.Status{Code: int32(trace.StatusCodeInternal), Message: err.Error()})
+		ctx, _ = tag.New(ctx, tag.Upsert(observability.KeyKind, "pool_get"), tag.Upsert(observability.KeyDetail, err.Error()))
+		stats.Record(ctx, observability.MErrors.M(1))
 		return errorConn{err}
 	}
-	measures = append(measures, observability.MConnectionsTaken.M(1))
 	return &activeConn{p: p, pc: pc, ctx: ctx}
 }
 
@@ -311,11 +308,19 @@ func (p *Pool) get(ctx context.Context) (*poolConn, error) {
 			pc := p.idle.back
 			p.idle.popBack()
 			p.mu.Unlock()
-			pc.c.Close()
+			ctx_, _ := tag.New(ctx, tag.Upsert(observability.KeyState, "stale"))
+			if cctx, ok := pc.c.(ConnWithContext); ok {
+				cctx.CloseContext(ctx_)
+			} else {
+				pc.c.Close()
+			}
+			stats.Record(ctx_, observability.MConnectionsClosed.M(1))
 			p.mu.Lock()
 			p.active--
 		}
 	}
+
+	mls := make([]stats.Measurement, 0, 3)
 
 	// Get idle connection from the front of idle list.
 	for p.idle.front != nil {
@@ -324,23 +329,34 @@ func (p *Pool) get(ctx context.Context) (*poolConn, error) {
 		p.mu.Unlock()
 		if (p.TestOnBorrow == nil || p.TestOnBorrow(pc.c, pc.t) == nil) &&
 			(p.MaxConnLifetime == 0 || nowFunc().Sub(pc.created) < p.MaxConnLifetime) {
-			stats.Record(ctx, observability.MConnectionsReused.M(1))
+			ctx, _ = tag.New(ctx, tag.Upsert(observability.KeyState, "reused"))
+			stats.Record(ctx, observability.MConnectionsOpen.M(1))
 			return pc, nil
 		}
-		pc.c.Close()
+		if cctx, ok := pc.c.(ConnWithContext); ok {
+			cctx.CloseContext(ctx)
+		} else {
+			pc.c.Close()
+		}
 		p.mu.Lock()
 		p.active--
+		ctx_, _ := tag.New(ctx, tag.Upsert(observability.KeyState, "idle"))
+		stats.Record(ctx_, observability.MConnectionsClosed.M(1))
 	}
 
 	// Check for pool closed before dialing a new connection.
 	if p.closed {
 		p.mu.Unlock()
+		ctx, _ = tag.New(ctx, tag.Upsert(observability.KeyKind, "pool_get"), tag.Upsert(observability.KeyDetail, "get on closed pool"))
+		stats.Record(ctx, observability.MErrors.M(1))
 		return nil, errors.New("redigo: get on closed pool")
 	}
 
 	// Handle limit for p.Wait == false.
 	if !p.Wait && p.MaxActive > 0 && p.active >= p.MaxActive {
 		p.mu.Unlock()
+		ctx, _ = tag.New(ctx, tag.Upsert(observability.KeyKind, "pool_get"), tag.Upsert(observability.KeyDetail, "connection pool limit exhausted"))
+		stats.Record(ctx, observability.MErrors.M(1))
 		return nil, ErrPoolExhausted
 	}
 
@@ -348,9 +364,11 @@ func (p *Pool) get(ctx context.Context) (*poolConn, error) {
 	p.mu.Unlock()
 	dialStartTime := time.Now()
 	c, err := p.Dial()
-	measures := []stats.Measurement{observability.MDialLatencyMilliseconds.M(observability.SinceInMilliseconds(dialStartTime))}
-	if err != nil {
-		measures = append(measures, observability.MDialErrors.M(1))
+	if err == nil {
+		ctx, _ = tag.New(ctx, tag.Upsert(observability.KeyState, "new"))
+		mls = append(mls, observability.MConnectionsOpen.M(1))
+	} else {
+		mls = append(mls, observability.MErrors.M(1))
 		c = nil
 		p.mu.Lock()
 		p.active--
@@ -359,8 +377,8 @@ func (p *Pool) get(ctx context.Context) (*poolConn, error) {
 		}
 		p.mu.Unlock()
 	}
-	measures = append(measures, observability.MConnectionsNew.M(1))
-	stats.Record(ctx, measures...)
+	mls = append(mls, observability.MRoundtripLatencyMs.M(observability.SinceInMilliseconds(dialStartTime)))
+	stats.Record(ctx, mls...)
 	return &poolConn{c: c, created: nowFunc()}, err
 }
 
@@ -392,7 +410,6 @@ func (p *Pool) put(ctx context.Context, pc *poolConn, forceClose bool) error {
 		p.ch <- struct{}{}
 	}
 	p.mu.Unlock()
-	stats.Record(ctx, observability.MConnectionsReturned.M(1))
 	return nil
 }
 
@@ -437,7 +454,6 @@ func (ac *activeConn) CloseContext(ctx context.Context) error {
 		return nil
 	}
 	ac.pc = nil
-	stats.Record(ctx, observability.MConnectionsClosed.M(1))
 
 	if ac.state&internal.MultiState != 0 {
 		pc.c.Send("DISCARD")
@@ -467,6 +483,8 @@ func (ac *activeConn) CloseContext(ctx context.Context) error {
 	}
 	pc.c.Do("")
 	ac.p.put(ctx, pc, ac.state != 0 || pc.c.Err() != nil)
+	ctx, _ = tag.New(ctx, tag.Upsert(observability.KeyState, "complete"))
+	stats.Record(ctx, observability.MConnectionsClosed.M(1))
 	return nil
 }
 

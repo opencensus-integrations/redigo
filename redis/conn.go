@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"go.opencensus.io/stats"
+	"go.opencensus.io/tag"
 	"go.opencensus.io/trace"
 
 	"github.com/opencensus-integrations/redigo/internal/observability"
@@ -180,12 +181,16 @@ func Dial(network, address string, options ...DialOption) (Conn, error) {
 
 func DialWithContext(ctx context.Context, network, address string, options ...DialOption) (Conn, error) {
 	startTime := time.Now()
+	ctx, _ = tag.New(ctx, tag.Upsert(observability.KeyCommandName, "dial"))
+
 	conn, err := doDial(network, address, options...)
-	measures := []stats.Measurement{observability.MDials.M(1), observability.MDialLatencyMilliseconds.M(observability.SinceInMilliseconds(startTime))}
+	ml := make([]stats.Measurement, 0, 3)
 	if err != nil {
-		measures = append(measures, observability.MDialErrors.M(1))
+		ctx, _ = tag.New(ctx, tag.Upsert(observability.KeyKind, "connection"), tag.Upsert(observability.KeyDetail, err.Error()))
+		ml = append(ml, observability.MErrors.M(1))
 	}
-	stats.Record(ctx, measures...)
+	ml = append(ml, observability.MRoundtripLatencyMs.M(observability.SinceInMilliseconds(startTime)))
+	stats.Record(ctx, ml...)
 	return conn, err
 }
 
@@ -399,27 +404,20 @@ func (c *conn) writeFloat64(n float64) (int, error) {
 }
 
 func (c *conn) writeCommand(ctx context.Context, cmd string, args []interface{}) (int64, error) {
-	ctx, span := trace.StartSpan(ctx, "redis.(*Conn).writeCommand")
-	defer span.End()
-
 	c.writeLen('*', 1+len(args))
 	n := int64(0)
 	ns, err := c.writeString(cmd)
 	n += int64(ns)
 	if err != nil {
-		span.SetStatus(trace.Status{Code: int32(trace.StatusCodeInternal), Message: err.Error()})
-		span.End()
 		return n, err
 	}
 	for _, arg := range args {
 		ni, err := c.writeArg(arg, true)
 		if err != nil {
-			span.End()
 			return n, err
 		}
 		n += int64(ni)
 	}
-	span.Annotatef([]trace.Attribute{trace.Int64Attribute("bytes_written", n)}, "Wrote bytes")
 	return n, nil
 }
 
@@ -614,23 +612,36 @@ func (c *conn) SendContext(ctx context.Context, cmd string, args ...interface{})
 	if c.writeTimeout != 0 {
 		c.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout))
 	}
-	if _, err := c.writeCommand(ctx, cmd, args); err != nil {
-		stats.Record(ctx, observability.MWriteErrors.M(1))
-		span.SetStatus(trace.Status{Code: trace.StatusCodeInternal, Message: err.Error()})
-		return c.fatal(err)
+	nw, err := c.writeCommand(ctx, cmd, args)
+	if err == nil {
+		stats.Record(ctx, observability.MBytesWritten.M(nw), observability.MWrites.M(1))
+		return nil
 	}
-	return nil
+
+	// Otherwise handle this error
+	ctx_, _ := tag.New(ctx, tag.Upsert(observability.KeyKind, "write"), tag.Upsert(observability.KeyDetail, err.Error()))
+	stats.Record(ctx_, observability.MErrors.M(1))
+	span.SetStatus(trace.Status{Code: trace.StatusCodeInternal, Message: err.Error()})
+	return c.fatal(err)
 }
 
 func (c *conn) FlushContext(ctx context.Context) error {
-	_, span := trace.StartSpan(ctx, "redis.(*Conn).Flush")
-	defer span.End()
+	startTime := time.Now()
+	ctx, _ = tag.New(ctx, tag.Upsert(observability.KeyCommandName, "flush"))
+	ctx, span := trace.StartSpan(ctx, "redis.(*Conn).Flush")
+
+	defer func() {
+		// At the very end we need to record the overall latency
+		stats.Record(ctx, observability.MRoundtripLatencyMs.M(observability.SinceInMilliseconds(startTime)))
+		span.End()
+	}()
 
 	if c.writeTimeout != 0 {
 		c.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout))
 	}
 	if err := c.bw.Flush(); err != nil {
-		stats.Record(ctx, observability.MWriteErrors.M(1))
+		ctx, _ = tag.New(ctx, tag.Upsert(observability.KeyKind, "write"), tag.Upsert(observability.KeyDetail, err.Error()))
+		stats.Record(ctx, observability.MErrors.M(1))
 		span.SetStatus(trace.Status{Code: trace.StatusCodeInternal, Message: err.Error()})
 		return c.fatal(err)
 	}
@@ -664,7 +675,8 @@ func (c *conn) receive(ctx context.Context, timeout time.Duration) (reply interf
 	c.conn.SetReadDeadline(deadline)
 
 	if reply, _, err = c.readReply(); err != nil {
-		stats.Record(ctx, observability.MWriteErrors.M(1))
+		ctx_, _ := tag.New(ctx, tag.Upsert(observability.KeyKind, "read"), tag.Upsert(observability.KeyDetail, err.Error()))
+		stats.Record(ctx_, observability.MErrors.M(1))
 		span.SetStatus(trace.Status{Code: trace.StatusCodeInternal, Message: err.Error()})
 		return nil, c.fatal(err)
 	}
@@ -681,7 +693,8 @@ func (c *conn) receive(ctx context.Context, timeout time.Duration) (reply interf
 	}
 	c.mu.Unlock()
 	if err, ok := reply.(Error); ok {
-		stats.Record(ctx, observability.MWriteErrors.M(1))
+		ctx_, _ := tag.New(ctx, tag.Upsert(observability.KeyKind, "read"), tag.Upsert(observability.KeyDetail, err.Error()))
+		stats.Record(ctx_, observability.MErrors.M(1))
 		span.SetStatus(trace.Status{Code: trace.StatusCodeInternal, Message: err.Error()})
 		return nil, err
 	}
@@ -715,13 +728,14 @@ func (c *conn) do(ctx context.Context, readTimeout time.Duration, cmd string, ar
 		spanName = "do"
 	}
 
-	ctx, _ = observability.TagKeyValuesIntoContext(ctx, observability.KeyCommandName, spanName)
-	ctx, span := trace.StartSpan(ctx, "redis.(*Conn)."+spanName)
 	startTime := time.Now()
+	ctx, _ = tag.New(ctx, tag.Upsert(observability.KeyCommandName, spanName))
+	ctx, span := trace.StartSpan(ctx, "redis.(*Conn)."+spanName)
+
 	defer func() {
 		// At the very end we need to record the overall latency
+		stats.Record(ctx, observability.MRoundtripLatencyMs.M(observability.SinceInMilliseconds(startTime)))
 		span.End()
-		stats.Record(ctx, observability.MRoundtripLatencyMilliseconds.M(observability.SinceInMilliseconds(startTime)))
 	}()
 
 	if c.writeTimeout != 0 {
@@ -733,9 +747,11 @@ func (c *conn) do(ctx context.Context, readTimeout time.Duration, cmd string, ar
 
 	if cmd != "" {
 		nw, err := c.writeCommand(ctx, cmd, args)
-		stats.Record(ctx, observability.MBytesWritten.M(nw), observability.MWrites.M(1))
-		if err != nil {
-			stats.Record(ctx, observability.MWriteErrors.M(1))
+		if err == nil {
+			stats.Record(ctx, observability.MBytesWritten.M(nw), observability.MWrites.M(1))
+		} else {
+			ctx_, _ := tag.New(ctx, tag.Upsert(observability.KeyKind, "write"), tag.Upsert(observability.KeyDetail, err.Error()))
+			stats.Record(ctx_, observability.MErrors.M(1))
 			span.SetStatus(trace.Status{Code: trace.StatusCodeInternal, Message: err.Error()})
 			return nil, c.fatal(err)
 		}
@@ -758,7 +774,9 @@ func (c *conn) do(ctx context.Context, readTimeout time.Duration, cmd string, ar
 	var nread int64
 	defer func() {
 		// At the end record the number of bytes read and increment the number of reads.
-		stats.Record(ctx, observability.MBytesRead.M(nread), observability.MReads.M(1))
+		if nread > 0 {
+			stats.Record(ctx, observability.MBytesRead.M(nread), observability.MReads.M(1))
+		}
 	}()
 
 	_, readSpan := trace.StartSpan(ctx, "redis.(*Conn).readReplies")
@@ -771,7 +789,8 @@ func (c *conn) do(ctx context.Context, readTimeout time.Duration, cmd string, ar
 			nread += int64(nir)
 			if e != nil {
 				readSpan.SetStatus(trace.Status{Code: int32(trace.StatusCodeInternal), Message: e.Error()})
-				stats.Record(ctx, observability.MReadErrors.M(1))
+				ctx_, _ := tag.New(ctx, tag.Upsert(observability.KeyKind, "read"), tag.Upsert(observability.KeyDetail, e.Error()))
+				stats.Record(ctx_, observability.MErrors.M(1))
 				return nil, c.fatal(e)
 			}
 			reply[i] = r
@@ -788,18 +807,21 @@ func (c *conn) do(ctx context.Context, readTimeout time.Duration, cmd string, ar
 		nread += int64(nir)
 		if e != nil {
 			readSpan.SetStatus(trace.Status{Code: int32(trace.StatusCodeInternal), Message: e.Error()})
-			stats.Record(ctx, observability.MReadErrors.M(1))
+			ctx_, _ := tag.New(ctx, tag.Upsert(observability.KeyKind, "read"), tag.Upsert(observability.KeyDetail, e.Error()))
+			stats.Record(ctx_, observability.MErrors.M(1))
 			return nil, c.fatal(e)
 		}
 		if e, ok := reply.(Error); ok && err == nil {
 			err = e
 		}
 	}
-	if err != nil {
-		stats.Record(ctx, observability.MReadErrors.M(1))
-		readSpan.SetStatus(trace.Status{Code: int32(trace.StatusCodeInternal), Message: err.Error()})
-	} else {
+	if err == nil {
+		// Note, on defer we always record nread since there is more than 1 return path on err==nil
 		span.Annotatef([]trace.Attribute{trace.Int64Attribute("bytes_read", nread)}, "Read bytes")
+	} else {
+		ctx_, _ := tag.New(ctx, tag.Upsert(observability.KeyKind, "read"), tag.Upsert(observability.KeyDetail, err.Error()))
+		stats.Record(ctx_, observability.MErrors.M(1))
+		readSpan.SetStatus(trace.Status{Code: int32(trace.StatusCodeInternal), Message: err.Error()})
 	}
 	return reply, err
 }
