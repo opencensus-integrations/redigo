@@ -35,7 +35,9 @@ import (
 
 var (
 	_ ConnWithTimeout = (*activeConn)(nil)
+	_ ConnWithContext = (*activeConn)(nil)
 	_ ConnWithTimeout = (*errorConn)(nil)
+	_ ConnWithContext = (*errorConn)(nil)
 )
 
 var nowFunc = time.Now // for testing
@@ -377,7 +379,11 @@ func (p *Pool) put(ctx context.Context, pc *poolConn, forceClose bool) error {
 
 	if pc != nil {
 		p.mu.Unlock()
-		pc.c.Close()
+		if cctx, ok := pc.c.(ConnWithContext); ok {
+			cctx.CloseContext(ctx)
+		} else {
+			pc.c.Close()
+		}
 		p.mu.Lock()
 		p.active--
 	}
@@ -422,12 +428,16 @@ func initSentinel() {
 }
 
 func (ac *activeConn) Close() error {
+	return ac.CloseContext(context.Background())
+}
+
+func (ac *activeConn) CloseContext(ctx context.Context) error {
 	pc := ac.pc
 	if pc == nil {
 		return nil
 	}
 	ac.pc = nil
-	stats.Record(ac.context(), observability.MConnectionsClosed.M(1))
+	stats.Record(ctx, observability.MConnectionsClosed.M(1))
 
 	if ac.state&internal.MultiState != 0 {
 		pc.c.Send("DISCARD")
@@ -456,7 +466,7 @@ func (ac *activeConn) Close() error {
 		}
 	}
 	pc.c.Do("")
-	ac.p.put(ac.context(), pc, ac.state != 0 || pc.c.Err() != nil)
+	ac.p.put(ctx, pc, ac.state != 0 || pc.c.Err() != nil)
 	return nil
 }
 
@@ -468,20 +478,20 @@ func (ac *activeConn) Err() error {
 	return pc.c.Err()
 }
 
-type contextAwareDoer interface {
-	DoWithContext(context.Context, string, ...interface{}) (interface{}, error)
+func (ac *activeConn) Do(commandName string, args ...interface{}) (reply interface{}, err error) {
+	return ac.DoContext(context.Background(), commandName, args...)
 }
 
-func (ac *activeConn) Do(commandName string, args ...interface{}) (reply interface{}, err error) {
+func (ac *activeConn) DoContext(ctx context.Context, commandName string, args ...interface{}) (reply interface{}, err error) {
 	pc := ac.pc
 	if pc == nil {
 		return nil, errConnClosed
 	}
 	ci := internal.LookupCommandInfo(commandName)
 	ac.state = (ac.state | ci.Set) &^ ci.Clear
-	cwdoer, ok := pc.c.(contextAwareDoer)
+	cwdoer, ok := pc.c.(ConnWithContext)
 	if ok {
-		return cwdoer.DoWithContext(ac.context(), commandName, args...)
+		return cwdoer.DoContext(ctx, commandName, args...)
 	}
 	return pc.c.Do(commandName, args...)
 }
@@ -501,29 +511,53 @@ func (ac *activeConn) DoWithTimeout(timeout time.Duration, commandName string, a
 }
 
 func (ac *activeConn) Send(commandName string, args ...interface{}) error {
+	return ac.SendContext(context.Background(), commandName, args...)
+}
+
+func (ac *activeConn) SendContext(ctx context.Context, commandName string, args ...interface{}) error {
 	pc := ac.pc
 	if pc == nil {
 		return errConnClosed
 	}
 	ci := internal.LookupCommandInfo(commandName)
 	ac.state = (ac.state | ci.Set) &^ ci.Clear
-	return pc.c.Send(commandName, args...)
+	if cctx, ok := pc.c.(ConnWithContext); ok {
+		return cctx.SendContext(ctx, commandName, args...)
+	} else {
+		return pc.c.Send(commandName, args...)
+	}
 }
 
 func (ac *activeConn) Flush() error {
+	return ac.FlushContext(context.Background())
+}
+
+func (ac *activeConn) FlushContext(ctx context.Context) error {
 	pc := ac.pc
 	if pc == nil {
 		return errConnClosed
 	}
-	return pc.c.Flush()
+	if cctx, ok := pc.c.(ConnWithContext); ok {
+		return cctx.FlushContext(ctx)
+	} else {
+		return pc.c.Flush()
+	}
 }
 
 func (ac *activeConn) Receive() (reply interface{}, err error) {
+	return ac.ReceiveContext(context.Background())
+}
+
+func (ac *activeConn) ReceiveContext(ctx context.Context) (reply interface{}, err error) {
 	pc := ac.pc
 	if pc == nil {
 		return nil, errConnClosed
 	}
-	return pc.c.Receive()
+	if cctx, ok := pc.c.(ConnWithContext); ok {
+		return cctx.ReceiveContext(ctx)
+	} else {
+		return pc.c.Receive()
+	}
 }
 
 func (ac *activeConn) ReceiveWithTimeout(timeout time.Duration) (reply interface{}, err error) {
@@ -541,18 +575,22 @@ func (ac *activeConn) ReceiveWithTimeout(timeout time.Duration) (reply interface
 type errorConn struct{ err error }
 
 func (ec errorConn) Do(string, ...interface{}) (interface{}, error) { return nil, ec.err }
-func (ec errorConn) DoWithContext(context.Context, string, ...interface{}) (interface{}, error) {
+func (ec errorConn) DoContext(context.Context, string, ...interface{}) (interface{}, error) {
 	return nil, ec.err
 }
 func (ec errorConn) DoWithTimeout(time.Duration, string, ...interface{}) (interface{}, error) {
 	return nil, ec.err
 }
-func (ec errorConn) Send(string, ...interface{}) error                     { return ec.err }
-func (ec errorConn) Err() error                                            { return ec.err }
-func (ec errorConn) Close() error                                          { return nil }
-func (ec errorConn) Flush() error                                          { return ec.err }
-func (ec errorConn) Receive() (interface{}, error)                         { return nil, ec.err }
-func (ec errorConn) ReceiveWithTimeout(time.Duration) (interface{}, error) { return nil, ec.err }
+func (ec errorConn) Send(string, ...interface{}) error                         { return ec.err }
+func (ec errorConn) SendContext(context.Context, string, ...interface{}) error { return ec.err }
+func (ec errorConn) Err() error                                                { return ec.err }
+func (ec errorConn) Close() error                                              { return nil }
+func (ec errorConn) CloseContext(context.Context) error                        { return nil }
+func (ec errorConn) Flush() error                                              { return ec.err }
+func (ec errorConn) FlushContext(context.Context) error                        { return ec.err }
+func (ec errorConn) Receive() (interface{}, error)                             { return nil, ec.err }
+func (ec errorConn) ReceiveContext(context.Context) (interface{}, error)       { return nil, ec.err }
+func (ec errorConn) ReceiveWithTimeout(time.Duration) (interface{}, error)     { return nil, ec.err }
 
 type idleList struct {
 	count       int
