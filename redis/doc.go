@@ -19,7 +19,7 @@
 //
 // Connections
 //
-// The Conn interface is the primary interface for working with Redis.
+// The ConnWithContext interface is the primary interface for working with Redis.
 // Applications create connections by calling the Dial, DialWithTimeout or
 // NewConn functions. In the future, functions will be added for creating
 // sharded and other types of connections.
@@ -29,14 +29,14 @@
 //
 // Executing Commands
 //
-// The Conn interface has a generic method for executing Redis commands:
+// The ConnWithContext interface has a generic method for executing Redis commands:
 //
-//  Do(commandName string, args ...interface{}) (reply interface{}, err error)
+//  DoContext(ctx context.Context, commandName string, args ...interface{}) (reply interface{}, err error)
 //
 // The Redis command reference (http://redis.io/commands) lists the available
 // commands. An example of using the Redis APPEND command is:
 //
-//  n, err := conn.Do("APPEND", "key", "value")
+//  n, err := conn.DoContext(ctx, "APPEND", "key", "value")
 //
 // The Do method converts command arguments to bulk strings for transmission
 // to the server as follows:
@@ -66,19 +66,19 @@
 //
 // Connections support pipelining using the Send, Flush and Receive methods.
 //
-//  Send(commandName string, args ...interface{}) error
-//  Flush() error
-//  Receive() (reply interface{}, err error)
+//  SendContext(context.Context, commandName string, args ...interface{}) error
+//  FlushContext(context.Context) error
+//  ReceiveContext(context.Context) (reply interface{}, err error)
 //
 // Send writes the command to the connection's output buffer. Flush flushes the
 // connection's output buffer to the server. Receive reads a single reply from
 // the server. The following example shows a simple pipeline.
 //
-//  c.Send("SET", "foo", "bar")
-//  c.Send("GET", "foo")
-//  c.Flush()
-//  c.Receive() // reply from SET
-//  v, err = c.Receive() // reply from GET
+//  c.SendContext(ctx, "SET", "foo", "bar")
+//  c.SendContext(ctx, "GET", "foo")
+//  c.FlushContext(ctx)
+//  c.ReceiveContext(ctx) // reply from SET
+//  v, err = c.ReceiveContext(ctx) // reply from GET
 //
 // The Do method combines the functionality of the Send, Flush and Receive
 // methods. The Do method starts by writing the command and flushing the output
@@ -91,10 +91,10 @@
 //
 // Use the Send and Do methods to implement pipelined transactions.
 //
-//  c.Send("MULTI")
-//  c.Send("INCR", "foo")
-//  c.Send("INCR", "bar")
-//  r, err := c.Do("EXEC")
+//  c.SendContext(ctx, "MULTI")
+//  c.SendContext(ctx, "INCR", "foo")
+//  c.SendContext(ctx, "INCR", "bar")
+//  r, err := c.DoContext(ctx, "EXEC")
 //  fmt.Println(r) // prints [1, 1]
 //
 // Concurrency
@@ -112,10 +112,10 @@
 //
 // Use the Send, Flush and Receive methods to implement Pub/Sub subscribers.
 //
-//  c.Send("SUBSCRIBE", "example")
-//  c.Flush()
+//  c.SendContext(ctx, "SUBSCRIBE", "example")
+//  c.FlushContext(ctx)
 //  for {
-//      reply, err := c.Receive()
+//      reply, err := c.ReceiveContext(ctx)
 //      if err != nil {
 //          return err
 //      }
@@ -149,7 +149,7 @@
 // error. If the error is nil, the function converts the reply to the specified
 // type:
 //
-//  exists, err := redis.Bool(c.Do("EXISTS", "foo"))
+//  exists, err := redis.Bool(c.DoContext(ctx, "EXISTS", "foo"))
 //  if err != nil {
 //      // handle error return from c.Do or type conversion error.
 //  }
@@ -158,7 +158,7 @@
 //
 //  var value1 int
 //  var value2 string
-//  reply, err := redis.Values(c.Do("MGET", "key1", "key2"))
+//  reply, err := redis.Values(c.DoContext(ctx, "MGET", "key1", "key2"))
 //  if err != nil {
 //      // handle error
 //  }
