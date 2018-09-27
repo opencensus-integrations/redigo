@@ -16,6 +16,7 @@ package redis_test
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -29,6 +30,7 @@ import (
 	"time"
 
 	"github.com/opencensus-integrations/redigo/redis"
+	"go.opencensus.io/trace"
 )
 
 type testConn struct {
@@ -633,6 +635,24 @@ func TestDialTLSSKipVerify(t *testing.T) {
 	checkPingPong(t, &buf, c)
 }
 
+func TestDialTraceOptions(t *testing.T) {
+	// construct trace options
+	options := redis.TraceOptions{}
+	// set default attributes
+	redis.WithDefaultAttributes(trace.StringAttribute("span.type", "DB"))(&options)
+
+	var buf bytes.Buffer
+	c, err := redis.DialWithContext(context.Background(), "tcp", "example.com:6379",
+		dialTestConnTLS(pingResponse, &buf),
+		redis.DialTLSSkipVerify(true),
+		redis.DialUseTLS(true),
+		redis.DialTraceOptions(options))
+	if err != nil {
+		t.Fatal("dial error:", err)
+	}
+	checkPingPong(t, &buf, c)
+}
+
 // Connect to local instance of Redis running on the default port.
 func ExampleDial() {
 	c, err := redis.Dial("tcp", ":6379")
@@ -645,6 +665,20 @@ func ExampleDial() {
 // Connect to remote instance of Redis using a URL.
 func ExampleDialURL() {
 	c, err := redis.DialURL(os.Getenv("REDIS_URL"))
+	if err != nil {
+		// handle connection error
+	}
+	defer c.Close()
+}
+
+// Dial with trace options
+func ExampleDialTraceOptions() {
+	// construct trace options
+	options := redis.TraceOptions{}
+	// set default attributes
+	redis.WithDefaultAttributes(trace.StringAttribute("span.type", "DB"))(&options)
+
+	c, err := redis.DialWithContext(context.Background(), "tcp", ":6379", redis.DialTraceOptions(options))
 	if err != nil {
 		// handle connection error
 	}
