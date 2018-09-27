@@ -63,6 +63,9 @@ type conn struct {
 
 	// Scratch space for formatting integers and floats.
 	numScratch [40]byte
+
+	// Trace options
+	options TraceOptions
 }
 
 // DialTimeout acts like Dial but takes timeouts for establishing the
@@ -91,6 +94,7 @@ type dialOptions struct {
 	useTLS       bool
 	skipVerify   bool
 	tlsConfig    *tls.Config
+	options      TraceOptions
 }
 
 // DialReadTimeout specifies the timeout for reading a single command reply.
@@ -173,6 +177,13 @@ func DialUseTLS(useTLS bool) DialOption {
 	}}
 }
 
+// DialTraceOptions specifies whether use trace options
+func DialTraceOptions(options TraceOptions) DialOption {
+	return DialOption{func(do *dialOptions) {
+		do.options = options
+	}}
+}
+
 // Dial connects to the Redis server at the given network and
 // address using the specified options.
 func Dial(network, address string, options ...DialOption) (Conn, error) {
@@ -242,6 +253,7 @@ func doDial(network, address string, options ...DialOption) (Conn, error) {
 		br:           bufio.NewReader(netConn),
 		readTimeout:  do.readTimeout,
 		writeTimeout: do.writeTimeout,
+		options:      do.options,
 	}
 
 	if do.password != "" {
@@ -330,6 +342,9 @@ func NewConn(netConn net.Conn, readTimeout, writeTimeout time.Duration) Conn {
 
 func (c *conn) CloseContext(ctx context.Context) error {
 	ctx, span := trace.StartSpan(ctx, "redis.(*Conn).Close")
+	if len(c.options.DefaultAttributes) > 0 {
+		span.AddAttributes(c.options.DefaultAttributes...)
+	}
 	c.mu.Lock()
 	err := c.err
 	if c.err == nil {
@@ -605,6 +620,9 @@ func (c *conn) Send(cmd string, args ...interface{}) error {
 func (c *conn) SendContext(ctx context.Context, cmd string, args ...interface{}) error {
 	_, span := trace.StartSpan(ctx, "redis.(*Conn).Send")
 	defer span.End()
+	if len(c.options.DefaultAttributes) > 0 {
+		span.AddAttributes(c.options.DefaultAttributes...)
+	}
 
 	c.mu.Lock()
 	c.pending += 1
@@ -635,6 +653,10 @@ func (c *conn) FlushContext(ctx context.Context) error {
 		stats.Record(ctx, observability.MRoundtripLatencyMs.M(observability.SinceInMilliseconds(startTime)))
 		span.End()
 	}()
+
+	if len(c.options.DefaultAttributes) > 0 {
+		span.AddAttributes(c.options.DefaultAttributes...)
+	}
 
 	if c.writeTimeout != 0 {
 		c.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout))
@@ -667,6 +689,10 @@ func (c *conn) ReceiveWithTimeout(timeout time.Duration) (reply interface{}, err
 func (c *conn) receive(ctx context.Context, timeout time.Duration) (reply interface{}, err error) {
 	_, span := trace.StartSpan(ctx, "redis.(*Conn).Receive")
 	defer span.End()
+
+	if len(c.options.DefaultAttributes) > 0 {
+		span.AddAttributes(c.options.DefaultAttributes...)
+	}
 
 	var deadline time.Time
 	if timeout != 0 {
@@ -738,6 +764,10 @@ func (c *conn) do(ctx context.Context, readTimeout time.Duration, cmd string, ar
 		span.End()
 	}()
 
+	if len(c.options.DefaultAttributes) > 0 {
+		span.AddAttributes(c.options.DefaultAttributes...)
+	}
+
 	if c.writeTimeout != 0 {
 		c.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout))
 		span.Annotatef([]trace.Attribute{
@@ -781,6 +811,10 @@ func (c *conn) do(ctx context.Context, readTimeout time.Duration, cmd string, ar
 
 	_, readSpan := trace.StartSpan(ctx, "redis.(*Conn).readReplies")
 	defer readSpan.End()
+
+	if len(c.options.DefaultAttributes) > 0 {
+		readSpan.AddAttributes(c.options.DefaultAttributes...)
+	}
 
 	if cmd == "" {
 		reply := make([]interface{}, pending)
