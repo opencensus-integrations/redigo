@@ -15,10 +15,13 @@
 package redis
 
 import (
+	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"io"
 	"strings"
+
+	"go.opencensus.io/trace"
 )
 
 // Script encapsulates the source, hash and key count for a Lua script. See
@@ -64,10 +67,22 @@ func (s *Script) Hash() string {
 // script using the EVALSHA command. If the command fails because the script is
 // not loaded, then Do evaluates the script using the EVAL command (thus
 // causing the script to load).
-func (s *Script) Do(c Conn, keysAndArgs ...interface{}) (interface{}, error) {
-	v, err := c.Do("EVALSHA", s.args(s.hash, keysAndArgs)...)
+func (s *Script) Do(c ConnWithContext, keysAndArgs ...interface{}) (interface{}, error) {
+	return s.DoContext(context.Background(), c, keysAndArgs...)
+}
+
+// DoContext evaluates the script. Under the covers, DoContext optimistically evaluates the
+// script using the EVALSHA command. If the command fails because the script is
+// not loaded, then DoContext evaluates the script using the EVAL command (thus
+// causing the script to load).
+func (s *Script) DoContext(ctx context.Context, c ConnWithContext, keysAndArgs ...interface{}) (interface{}, error) {
+	ctx, span := trace.StartSpan(ctx, "redis.(*Script).DoContext")
+	defer span.End()
+
+	v, err := c.DoContext(ctx, "EVALSHA", s.args(s.hash, keysAndArgs)...)
 	if e, ok := err.(Error); ok && strings.HasPrefix(string(e), "NOSCRIPT ") {
-		v, err = c.Do("EVAL", s.args(s.src, keysAndArgs)...)
+		span.Annotate(nil, "missed script cache")
+		v, err = c.DoContext(ctx, "EVAL", s.args(s.src, keysAndArgs)...)
 	}
 	return v, err
 }
