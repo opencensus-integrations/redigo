@@ -76,7 +76,7 @@ func (s *Script) Do(c ConnWithContext, keysAndArgs ...interface{}) (interface{},
 // not loaded, then DoContext evaluates the script using the EVAL command (thus
 // causing the script to load).
 func (s *Script) DoContext(ctx context.Context, c ConnWithContext, keysAndArgs ...interface{}) (interface{}, error) {
-	ctx, span := trace.StartSpan(ctx, "redis.(*Script).DoContext")
+	ctx, span := trace.StartSpan(ctx, "redis.(*Script).DoContext", trace.WithSpanKind(trace.SpanKindClient))
 	defer span.End()
 
 	v, err := c.DoContext(ctx, "EVALSHA", s.args(s.hash, keysAndArgs)...)
