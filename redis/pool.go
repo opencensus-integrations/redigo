@@ -188,7 +188,7 @@ func (p *Pool) Get() Conn {
 }
 
 func (p *Pool) GetWithContext(ctx context.Context) Conn {
-	ctx, span := trace.StartSpan(ctx, "redis.(*Pool).Get")
+	ctx, span := trace.StartSpan(ctx, "redis.(*Pool).Get", trace.WithSpanKind(trace.SpanKindClient))
 	defer span.End()
 
 	pc, err := p.get(ctx)

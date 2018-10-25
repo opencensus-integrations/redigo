@@ -341,7 +341,7 @@ func NewConn(netConn net.Conn, readTimeout, writeTimeout time.Duration) Conn {
 }
 
 func (c *conn) CloseContext(ctx context.Context) error {
-	ctx, span := trace.StartSpan(ctx, "redis.(*Conn).Close")
+	ctx, span := trace.StartSpan(ctx, "redis.(*Conn).Close", trace.WithSpanKind(trace.SpanKindClient))
 	if len(c.options.DefaultAttributes) > 0 {
 		span.AddAttributes(c.options.DefaultAttributes...)
 	}
@@ -618,7 +618,7 @@ func (c *conn) Send(cmd string, args ...interface{}) error {
 }
 
 func (c *conn) SendContext(ctx context.Context, cmd string, args ...interface{}) error {
-	_, span := trace.StartSpan(ctx, "redis.(*Conn).Send")
+	_, span := trace.StartSpan(ctx, "redis.(*Conn).Send", trace.WithSpanKind(trace.SpanKindClient))
 	defer span.End()
 	if len(c.options.DefaultAttributes) > 0 {
 		span.AddAttributes(c.options.DefaultAttributes...)
@@ -646,7 +646,7 @@ func (c *conn) SendContext(ctx context.Context, cmd string, args ...interface{})
 func (c *conn) FlushContext(ctx context.Context) error {
 	startTime := time.Now()
 	ctx, _ = tag.New(ctx, tag.Upsert(observability.KeyCommandName, "flush"))
-	ctx, span := trace.StartSpan(ctx, "redis.(*Conn).Flush")
+	ctx, span := trace.StartSpan(ctx, "redis.(*Conn).Flush", trace.WithSpanKind(trace.SpanKindClient))
 
 	defer func() {
 		// At the very end we need to record the overall latency
@@ -687,7 +687,7 @@ func (c *conn) ReceiveWithTimeout(timeout time.Duration) (reply interface{}, err
 }
 
 func (c *conn) receive(ctx context.Context, timeout time.Duration) (reply interface{}, err error) {
-	_, span := trace.StartSpan(ctx, "redis.(*Conn).Receive")
+	_, span := trace.StartSpan(ctx, "redis.(*Conn).Receive", trace.WithSpanKind(trace.SpanKindClient))
 	defer span.End()
 
 	if len(c.options.DefaultAttributes) > 0 {
@@ -756,7 +756,7 @@ func (c *conn) do(ctx context.Context, readTimeout time.Duration, cmd string, ar
 
 	startTime := time.Now()
 	ctx, _ = tag.New(ctx, tag.Upsert(observability.KeyCommandName, spanName))
-	ctx, span := trace.StartSpan(ctx, "redis.(*Conn)."+spanName)
+	ctx, span := trace.StartSpan(ctx, "redis.(*Conn)."+spanName, trace.WithSpanKind(trace.SpanKindClient))
 
 	defer func() {
 		// At the very end we need to record the overall latency
@@ -809,7 +809,7 @@ func (c *conn) do(ctx context.Context, readTimeout time.Duration, cmd string, ar
 		}
 	}()
 
-	_, readSpan := trace.StartSpan(ctx, "redis.(*Conn).readReplies")
+	_, readSpan := trace.StartSpan(ctx, "redis.(*Conn).readReplies", trace.WithSpanKind(trace.SpanKindClient))
 	defer readSpan.End()
 
 	if len(c.options.DefaultAttributes) > 0 {
