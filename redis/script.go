@@ -20,7 +20,12 @@ import (
 	"encoding/hex"
 	"io"
 	"strings"
+	"time"
 
+	"github.com/opencensus-integrations/redigo/internal/observability"
+
+	"go.opencensus.io/stats"
+	"go.opencensus.io/tag"
 	"go.opencensus.io/trace"
 )
 
@@ -75,9 +80,21 @@ func (s *Script) Do(c ConnWithContext, keysAndArgs ...interface{}) (interface{},
 // script using the EVALSHA command. If the command fails because the script is
 // not loaded, then DoContext evaluates the script using the EVAL command (thus
 // causing the script to load).
-func (s *Script) DoContext(ctx context.Context, c ConnWithContext, keysAndArgs ...interface{}) (interface{}, error) {
-	ctx, span := trace.StartSpan(ctx, "redis.(*Script).DoContext", trace.WithSpanKind(trace.SpanKindClient))
-	defer span.End()
+func (s *Script) DoContext(ctx context.Context, c ConnWithContext, keysAndArgs ...interface{}) (res interface{}, reserr error) {
+	startTime := time.Now()
+	methodName := "redigo/redis.(*Script).DoContext"
+	ctx, _ = tag.New(ctx, tag.Upsert(observability.KeyCommandName, methodName))
+	ctx, span := trace.StartSpan(ctx, methodName, trace.WithSpanKind(trace.SpanKindClient))
+	defer func() {
+		if reserr != nil {
+			span.SetStatus(trace.Status{Code: int32(trace.StatusCodeInternal), Message: reserr.Error()})
+			ctx, _ = tag.New(ctx, tag.Upsert(observability.KeyKind, "pool_get"), tag.Upsert(observability.KeyDetail, reserr.Error()))
+			stats.Record(ctx, observability.MErrors.M(1), observability.MRoundtripLatencyMs.M(observability.SinceInMilliseconds(startTime)))
+		} else {
+			stats.Record(ctx, observability.MRoundtripLatencyMs.M(observability.SinceInMilliseconds(startTime)))
+		}
+		span.End()
+	}()
 
 	v, err := c.DoContext(ctx, "EVALSHA", s.args(s.hash, keysAndArgs)...)
 	if e, ok := err.(Error); ok && strings.HasPrefix(string(e), "NOSCRIPT ") {

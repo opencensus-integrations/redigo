@@ -188,8 +188,14 @@ func (p *Pool) Get() Conn {
 }
 
 func (p *Pool) GetWithContext(ctx context.Context) Conn {
-	ctx, span := trace.StartSpan(ctx, "redis.(*Pool).Get", trace.WithSpanKind(trace.SpanKindClient))
-	defer span.End()
+	startTime := time.Now()
+	methodName := "redigo/redis.(*Pool).GetWithContext"
+	ctx, _ = tag.New(ctx, tag.Upsert(observability.KeyCommandName, methodName))
+	ctx, span := trace.StartSpan(ctx, methodName, trace.WithSpanKind(trace.SpanKindClient))
+	defer func() {
+		stats.Record(ctx, observability.MRoundtripLatencyMs.M(observability.SinceInMilliseconds(startTime)))
+		span.End()
+	}()
 
 	pc, err := p.get(ctx)
 	if err != nil {

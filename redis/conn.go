@@ -29,11 +29,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/opencensus-integrations/redigo/internal/observability"
+
 	"go.opencensus.io/stats"
 	"go.opencensus.io/tag"
 	"go.opencensus.io/trace"
-
-	"github.com/opencensus-integrations/redigo/internal/observability"
 )
 
 var (
@@ -340,11 +340,27 @@ func NewConn(netConn net.Conn, readTimeout, writeTimeout time.Duration) Conn {
 	}
 }
 
-func (c *conn) CloseContext(ctx context.Context) error {
-	ctx, span := trace.StartSpan(ctx, "redis.(*Conn).Close", trace.WithSpanKind(trace.SpanKindClient))
+func (c *conn) CloseContext(ctx context.Context) (cerr error) {
+	startTime := time.Now()
+	methodName := "redigo/redis.(*Conn).Close"
+	ctx, _ = tag.New(ctx, tag.Upsert(observability.KeyCommandName, methodName))
+	ctx, span := trace.StartSpan(ctx, methodName, trace.WithSpanKind(trace.SpanKindClient))
+
+	defer func() {
+		if cerr != nil {
+			span.SetStatus(trace.Status{Code: int32(trace.StatusCodeInternal), Message: cerr.Error()})
+			ctx, _ = tag.New(ctx, tag.Upsert(observability.KeyKind, "pool_get"), tag.Upsert(observability.KeyDetail, cerr.Error()))
+			stats.Record(ctx, observability.MErrors.M(1), observability.MRoundtripLatencyMs.M(observability.SinceInMilliseconds(startTime)))
+		} else {
+			stats.Record(ctx, observability.MRoundtripLatencyMs.M(observability.SinceInMilliseconds(startTime)))
+		}
+		span.End()
+	}()
+
 	if len(c.options.DefaultAttributes) > 0 {
 		span.AddAttributes(c.options.DefaultAttributes...)
 	}
+
 	c.mu.Lock()
 	err := c.err
 	if c.err == nil {
@@ -352,7 +368,7 @@ func (c *conn) CloseContext(ctx context.Context) error {
 		err = c.conn.Close()
 	}
 	c.mu.Unlock()
-	span.End()
+
 	return err
 }
 
@@ -617,9 +633,22 @@ func (c *conn) Send(cmd string, args ...interface{}) error {
 	return c.SendContext(context.Background(), cmd, args...)
 }
 
-func (c *conn) SendContext(ctx context.Context, cmd string, args ...interface{}) error {
-	_, span := trace.StartSpan(ctx, "redis.(*Conn).Send", trace.WithSpanKind(trace.SpanKindClient))
-	defer span.End()
+func (c *conn) SendContext(ctx context.Context, cmd string, args ...interface{}) (rerr error) {
+	methodName := "redigo/redis.(*Conn).Send"
+	startTime := time.Now()
+	ctx, _ = tag.New(ctx, tag.Upsert(observability.KeyCommandName, methodName))
+	ctx, span := trace.StartSpan(ctx, methodName, trace.WithSpanKind(trace.SpanKindClient))
+	defer func() {
+		if rerr != nil {
+			span.SetStatus(trace.Status{Code: int32(trace.StatusCodeInternal), Message: rerr.Error()})
+			ctx, _ = tag.New(ctx, tag.Upsert(observability.KeyKind, "pool_get"), tag.Upsert(observability.KeyDetail, rerr.Error()))
+			stats.Record(ctx, observability.MErrors.M(1), observability.MRoundtripLatencyMs.M(observability.SinceInMilliseconds(startTime)))
+		} else {
+			stats.Record(ctx, observability.MRoundtripLatencyMs.M(observability.SinceInMilliseconds(startTime)))
+		}
+		span.End()
+	}()
+
 	if len(c.options.DefaultAttributes) > 0 {
 		span.AddAttributes(c.options.DefaultAttributes...)
 	}
