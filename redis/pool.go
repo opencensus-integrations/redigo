@@ -162,6 +162,10 @@ type Pool struct {
 	// the pool does not close connections based on age.
 	MaxConnLifetime time.Duration
 
+	// TraceOptions defines the attributes that will be added to every span
+	// that is created in relation to every connection from this pool.
+	TraceOptions TraceOptions
+
 	chInitialized uint32 // set to 1 when field ch is initialized
 
 	mu     sync.Mutex    // mu protects the following fields
@@ -196,6 +200,10 @@ func (p *Pool) GetWithContext(ctx context.Context) Conn {
 		stats.Record(ctx, observability.MRoundtripLatencyMs.M(observability.SinceInMilliseconds(startTime)))
 		span.End()
 	}()
+
+	if len(p.TraceOptions.DefaultAttributes) > 0 {
+		span.AddAttributes(p.TraceOptions.DefaultAttributes...)
+	}
 
 	pc, err := p.get(ctx)
 	if err != nil {
